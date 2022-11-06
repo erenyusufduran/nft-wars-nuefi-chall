@@ -6,7 +6,11 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 
-contract NFTWars is ERC721URIStorage {
+import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
+import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
+import "@chainlink/contracts/src/v0.8/ConfirmedOwner.sol";
+
+contract NFTWars is ERC721URIStorage, VRFConsumerBaseV2, ConfirmedOwner {
     using Strings for uint256;
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIdCounter;
@@ -14,6 +18,7 @@ contract NFTWars is ERC721URIStorage {
     struct NFT {
         uint256 tokenId;
         uint256 timeLock;
+        uint256 power;
         uint8 level;
         bool openForFight;
     }
@@ -24,6 +29,28 @@ contract NFTWars is ERC721URIStorage {
     uint256 private constant FIGHT_FEE = 0.1 ether;
 
     mapping(uint256 => NFT) private warriors;
+
+    // Chainlink
+    uint64 immutable i_subscriptionId;
+    address vrfCoordinator = 0x2Ca8E0C643bDe4C2E08ab1fA0da3401AdAD7734D;
+    bytes32 s_keyHash =
+        0x79d3d8832d904592c0bf9818b621522c988bb8b0c05cdc3b15aea1b6e8db0c15;
+    uint32 constant callbackGasLimit = 100000;
+    uint16 constant requestConfirmations = 3;
+    uint32 constant numWords = 1;
+
+    struct RequestStatus {
+        bool fulfilled;
+        bool exists;
+        uint256[] randomWords;
+        uint256 requestTokenId;
+    }
+
+    mapping(uint256 => RequestStatus) public s_requests;
+    uint256[] public requestIds;
+    uint256 public lastRequestId;
+
+    VRFCoordinatorV2Interface COORDINATOR;
 
     modifier isLocked(uint256 _tokenId) {
         uint256 remainLockTime = warriors[_tokenId].timeLock;
@@ -44,7 +71,55 @@ contract NFTWars is ERC721URIStorage {
         _;
     }
 
-    constructor(uint64 _subscriptionId) ERC721("NFT Wars", "NFW") {}
+    constructor(uint64 _subscriptionId)
+        ERC721("NFT Wars", "NFW")
+        VRFConsumerBaseV2(vrfCoordinator)
+        ConfirmedOwner(msg.sender)
+    {
+        COORDINATOR = VRFCoordinatorV2Interface(vrfCoordinator);
+        i_subscriptionId = _subscriptionId;
+    }
+
+    function requestRandomWords() external payable returns (uint256 requestId) {
+        require(msg.value >= MINT_FEE, "Insufficient funds.");
+        _tokenIdCounter.increment();
+        uint256 tokenId = _tokenIdCounter.current();
+        _safeMint(msg.sender, tokenId);
+        warriors[tokenId] = NFT(tokenId, 0, 0, 0, false);
+        _setTokenURI(tokenId, getTokenURI(tokenId));
+        requestId = COORDINATOR.requestRandomWords(
+            s_keyHash,
+            i_subscriptionId,
+            requestConfirmations,
+            callbackGasLimit,
+            numWords
+        );
+        s_requests[requestId] = RequestStatus(
+            false,
+            true,
+            new uint256[](0),
+            tokenId
+        );
+        requestIds.push(requestId);
+        lastRequestId = requestId;
+        return requestId;
+    }
+
+    function fulfillRandomWords(
+        uint256 _requestId,
+        uint256[] memory _randomWords
+    ) internal override {
+        require(s_requests[_requestId].exists, "Request not found!");
+        s_requests[_requestId].fulfilled = true;
+        s_requests[_requestId].randomWords = _randomWords;
+
+        uint256 powerFromTS = powerFromTimestamp();
+        uint256 powerFromVRF = _randomWords[0] % 100;
+
+        warriors[s_requests[_requestId].requestTokenId].power =
+            powerFromVRF +
+            powerFromTS;
+    }
 
     function attack(uint256 _tokenId, uint256 _toTokenId)
         external
