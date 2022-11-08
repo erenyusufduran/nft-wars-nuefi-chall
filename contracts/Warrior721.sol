@@ -38,7 +38,7 @@ contract Warrior721 is ERC721URIStorage, VRFConsumerBaseV2 {
     uint64 immutable i_subscriptionId; // subscription id from chainlink vrf
     address vrfCoordinator; // VRF Coordinator For Network
     bytes32 s_keyHash; // key hash for network
-    uint32 constant callbackGasLimit = 300000;
+    uint32 callbackGasLimit; // gas limit for requests
     uint16 constant requestConfirmations = 3; // required request confirmations
     uint32 constant numWords = 1; // requested words count.
 
@@ -79,12 +79,14 @@ contract Warrior721 is ERC721URIStorage, VRFConsumerBaseV2 {
     constructor(
         uint64 _subscriptionId,
         address _vrfCoordinator,
-        bytes32 _keyHash
+        bytes32 _keyHash,
+        uint32 _callbackGasLimit
     ) ERC721("Web3Warriors", "W3W") VRFConsumerBaseV2(_vrfCoordinator) {
         vrfCoordinator = _vrfCoordinator;
         s_keyHash = _keyHash;
         COORDINATOR = VRFCoordinatorV2Interface(_vrfCoordinator);
         i_subscriptionId = _subscriptionId;
+        callbackGasLimit = _callbackGasLimit;
         treasury = payable(msg.sender);
     }
 
